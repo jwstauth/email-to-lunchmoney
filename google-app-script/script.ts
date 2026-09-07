@@ -71,16 +71,13 @@ function findAndForwardEmails() {
         thread.removeLabel(gmailLabel);
       } else {
         const responseBody = response.getContentText();
-        Logger.log(
+        throw new Error(
           `Failed to send email "${subject}". Status: ${statusCode}, Response: ${responseBody}`,
         );
-        // Remove label even on failure to avoid reprocessing (per design decision)
-        thread.removeLabel(gmailLabel);
       }
     } catch (error) {
       Logger.log(`Error sending email "${subject}": ${error}`);
-      // Remove label even on error to avoid reprocessing
-      thread.removeLabel(gmailLabel);
+      throw error;
     }
   }
 }

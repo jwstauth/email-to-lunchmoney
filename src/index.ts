@@ -51,9 +51,13 @@ async function processEmail(email: Email, env: Env) {
 
   const results = processors.map(async processor => {
     try {
-      const action = await processor.process(email, env);
-      if (action !== null) {
-        await recordAction(action, processor.identifier, env);
+      const result = await processor.process(email, env);
+      if (result !== null) {
+        const actions = Array.isArray(result) ? result : [result];
+
+        for (const action of actions) {
+          await recordAction(action, processor.identifier, env);
+        }
       }
     } catch (error) {
       captureException(error);

@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "email-to-lunchmoney",
-      "database_id": "YOUR_DATABASE_ID_HERE",
+      "database_id": "afbe28da-7b30-404a-a5c2-a47dace502e9",
     },
   ],
   "triggers": {

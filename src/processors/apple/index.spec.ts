@@ -53,6 +53,14 @@ const testCases = [
       note: 'ReciMe: Recipes & Meal Planner, ReciMe Plus (Annual)',
     },
   },
+  {
+    file: 'example-canada',
+    expected: {
+      type: 'update',
+      match: {expectedPayee: 'Apple', expectedTotal: 7349},
+      note: 'Baby Connect: Baby Tracker, Family (12 months) (Annual)',
+    },
+  },
 ];
 
 test.for(testCases)('can process $file', async ({file, expected}) => {
@@ -68,4 +76,15 @@ test.for(testCases)('does match $file', async ({file}) => {
   const emailFile = await import(`./fixtures/${file}.eml?raw`);
   const email = await PostalMime.parse(emailFile.default);
   expect(appleEmailProcessor.matchEmail(email)).toBe(true);
+});
+
+test('matches Canadian bilingual Apple receipt subject', () => {
+  expect(
+    appleEmailProcessor.matchEmail({
+      from: {
+        address: 'no_reply@email.apple.com',
+      },
+      subject: 'Your receipt from Apple / Votre reçu d’Apple',
+    } as any),
+  ).toBe(true);
 });

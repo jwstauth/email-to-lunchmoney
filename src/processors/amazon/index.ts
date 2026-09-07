@@ -15,55 +15,63 @@ import type {AmazonOrder, AmazonOrderItem} from './types';
  * Extracts the main order block from an Amazon plain text email.
  * It starts at the line containing "Order #" and ends before the footer.
  */
-export function extractOrderBlock(emailText: string): string | null {
-  const orderStartMatch = emailText.match(/Order #\s*\n(.+?)\n/i);
-  if (!orderStartMatch || orderStartMatch.index === undefined) {
-    return null;
+export function extractOrderBlocks(emailText: string): string[] {
+  const orderStarts = [...emailText.matchAll(/^Order #\s*$/gim)];
+
+  if (orderStarts.length === 0) {
+    return [];
   }
 
-  const orderStartIndex = orderStartMatch.index;
-  const footerMatch = emailText.match(/©\d{4} Amazon\.com/);
+  const footerMatch = emailText.match(/©\d{4} Amazon\.(?:com|ca)/i);
   if (!footerMatch || footerMatch.index === undefined) {
-    return null;
+    return [];
   }
 
-  return emailText.slice(orderStartIndex, footerMatch.index).trim();
+  const emailEnd = footerMatch.index;
+
+  return orderStarts.map((match, index) => {
+    const start = match.index ?? 0;
+    const nextStart = orderStarts[index + 1]?.index ?? emailEnd;
+
+    return emailText.slice(start, nextStart).trim();
+  });
+}
+
+export function extractOrderBlock(emailText: string): string | null {
+  return extractOrderBlocks(emailText)[0] ?? null;
 }
 
 /**
- * Computes the tax amount for each item in an order by proportionally
- * allocating the total tax across all items based on their pre-tax cost.
+ * Computes the adjustment amount for each item in an order by proportionally
+ * allocating the difference between the item subtotal and final order total.
+ * This can represent tax, discounts, promotions, or other adjustments.
  * Works with cents (integers) to avoid floating-point precision issues.
- * Returns tax amounts in cents.
+ * Returns adjustment amounts in cents.
  */
-export function computeItemTaxes(items: AmazonOrderItem[], totalCents: number): number[] {
+export function computeItemAdjustments(items: AmazonOrderItem[], totalCents: number): number[] {
   const subtotalCents = items.reduce(
     (sum, item) => sum + item.priceEachCents * item.quantity,
     0,
   );
 
-  const totalTaxCents = totalCents - subtotalCents;
+  const totalAdjustmentCents = totalCents - subtotalCents;
 
-  if (totalTaxCents < 0) {
-    throw new Error('Total cost is less than subtotal.');
-  }
-
-  if (totalTaxCents === 0) {
+  if (totalAdjustmentCents === 0) {
     return items.map(() => 0);
   }
 
-  // Calculate proportional tax for each item in cents
-  const taxCents = items.map(item => {
+  // Calculate proportional adjustment for each item in cents
+  const adjustmentCents = items.map(item => {
     const itemCostCents = item.priceEachCents * item.quantity;
-    return Math.round((itemCostCents / subtotalCents) * totalTaxCents);
+    return Math.round((itemCostCents / subtotalCents) * totalAdjustmentCents);
   });
 
   // Adjust for rounding errors by adding/subtracting from the last item
-  const calculatedTotalTax = taxCents.reduce((sum, tax) => sum + tax, 0);
-  const difference = totalTaxCents - calculatedTotalTax;
-  taxCents[taxCents.length - 1] += difference;
+  const calculatedTotalAdjustment = adjustmentCents.reduce((sum, adjustment) => sum + adjustment, 0);
+  const difference = totalAdjustmentCents - calculatedTotalAdjustment;
+  adjustmentCents[adjustmentCents.length - 1] += difference;
 
-  return taxCents;
+  return adjustmentCents;
 }
 
 function makeItemNote(order: AmazonOrder, item: AmazonOrderItem) {
@@ -72,7 +80,10 @@ function makeItemNote(order: AmazonOrder, item: AmazonOrderItem) {
   return `${item.shortName}${quantity} (${order.orderId})`;
 }
 
-function makeAction(order: AmazonOrder): LunchMoneyAction {
+function makeAction(
+  order: AmazonOrder,
+  sourceEvent: 'ordered' | 'shipped',
+): LunchMoneyAction {
   if (order.orderItems.length === 0) {
     return {
       match: {
@@ -80,11 +91,13 @@ function makeAction(order: AmazonOrder): LunchMoneyAction {
         expectedTotal: order.totalCostCents,
       },
       type: 'update',
+      sourceId: order.orderId,
+      sourceEvent,
       note: `[No products in email] (${order.orderId})`,
     };
   }
 
-  const itemsTax = computeItemTaxes(order.orderItems, order.totalCostCents);
+  const itemsAdjustments = computeItemAdjustments(order.orderItems, order.totalCostCents);
 
   const match: LunchMoneyMatch = {
     expectedPayee: 'Amazon',
@@ -95,9 +108,11 @@ function makeAction(order: AmazonOrder): LunchMoneyAction {
     const splitAction: LunchMoneySplit = {
       match,
       type: 'split',
+      sourceId: order.orderId,
+      sourceEvent,
       split: order.orderItems.map((item, i) => ({
         note: makeItemNote(order, item),
-        amount: item.priceEachCents * item.quantity + itemsTax[i],
+        amount: item.priceEachCents * item.quantity + itemsAdjustments[i],
       })),
     };
 
@@ -107,38 +122,86 @@ function makeAction(order: AmazonOrder): LunchMoneyAction {
   const updateAction: LunchMoneyUpdate = {
     match,
     type: 'update',
+    sourceId: order.orderId,
+    sourceEvent,
     note: makeItemNote(order, order.orderItems[0]),
   };
 
   return updateAction;
 }
 
+async function removeStaleOrderedAction(orderId: string, env: Env) {
+  const {results} = await env.DB.prepare(
+    "SELECT id, action FROM lunchmoney_actions WHERE source = 'amazon'",
+  ).all<{id: number; action: string}>();
+
+  const staleIds = results
+    .filter(row => {
+      const action = JSON.parse(row.action) as LunchMoneyAction;
+
+      return (
+        action.sourceId === orderId &&
+        action.sourceEvent === 'ordered'
+      );
+    })
+    .map(row => row.id);
+
+  for (const id of staleIds) {
+    await env.DB.prepare(
+      'DELETE FROM lunchmoney_actions WHERE id = ?',
+    )
+      .bind(id)
+      .run();
+  }
+}
+
 async function process(email: Email, env: Env) {
   const emailText = email.text ?? '';
-  const orderText = extractOrderBlock(emailText);
+  const sourceEvent = email.subject?.startsWith('Shipped')
+    ? 'shipped'
+    : 'ordered';
+  const orderTexts = extractOrderBlocks(emailText);
 
-  if (orderText === null) {
-    console.error({orderText});
-    throw new Error('Failed to extract order block from amazon email');
+  if (orderTexts.length === 0) {
+    throw new Error('Failed to extract order blocks from amazon email');
   }
 
-  const order = await extractOrder(orderText, env);
+  const actions: LunchMoneyAction[] = [];
 
-  console.log('Got order details from amazon email', {order});
+  for (const orderText of orderTexts) {
+    const order = await extractOrder(orderText, env);
 
-  if (order.totalCostCents === 0) {
-    console.info('Ignoring Amazon order with zero cost', {orderId: order.orderId});
+    console.log('Got order details from amazon email', {order});
+
+    if (order.totalCostCents === 0) {
+      console.info('Ignoring Amazon order with zero cost', {
+        orderId: order.orderId,
+      });
+      continue;
+    }
+
+    if (sourceEvent === 'shipped') {
+      await removeStaleOrderedAction(order.orderId, env);
+    }
+
+    actions.push(makeAction(order, sourceEvent));
+  }
+
+  if (actions.length === 0) {
     return null;
   }
 
-  return makeAction(order);
+  return actions.length === 1 ? actions[0] : actions;
 }
 
 function matchEmail(email: Email) {
   const {from, subject} = email;
+  const address = from?.address ?? '';
+  const isAmazonOrderEmail = subject?.startsWith('Ordered') || subject?.startsWith('Shipped');
+
   return (
-    Boolean(from?.address?.endsWith('amazon.com')) &&
-    Boolean(subject?.startsWith('Ordered'))
+    (address.endsWith('amazon.com') || address.endsWith('amazon.ca')) &&
+    Boolean(isAmazonOrderEmail)
   );
 }
 

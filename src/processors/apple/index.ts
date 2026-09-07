@@ -16,7 +16,7 @@ const MATCHERS = [
   {
     testRegex: /Apple Account:\s*\n+[^\s@]+@[^ ]+\b/,
     totalCostRegex:
-      /Subtotal\s*\n+\$\d+\.\d{2}\s*\n+Tax\s*\n+\$\d+\.\d{2}[\s\S]*?-{5,}[\s\S]*?\n\$(?<totalCostUsd>\d+\.\d{2})/,
+    /Subtotal\s*\n+\$\d+\.\d{2}\s*\n+(?:Tax|GST\/HST)\s*\n+\$\d+\.\d{2}[\s\S]*?-{3,}[\s\S]*?\n\$(?<totalCostUsd>\d+\.\d{2})/,
     orderDetailsRegexes: [
       // Subscription receipts may include arbitrary promotional content before
       // the item. Anchor to the item price and billing section instead.
@@ -78,7 +78,7 @@ function matchEmail(email: Email) {
 
   return (
     Boolean(from?.address?.endsWith('apple.com')) &&
-    subject === 'Your receipt from Apple.'
+    subject?.startsWith('Your receipt from Apple')
   );
 }
 

@@ -4,9 +4,10 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 import fixture2Email from './fixtures/example-2.eml?raw';
 import fixtureEmail from './fixtures/example.eml?raw';
+import shippedFixtureEmail from './fixtures/shipped-example.eml?raw';
 import fixtureOrder from './fixtures/example.json';
 import fixtureEmailText from './fixtures/example.txt';
-import {amazonProcessor, computeItemTaxes, extractOrderBlock} from './index';
+import {amazonProcessor, computeItemAdjustments, extractOrderBlock, extractOrderBlocks} from './index';
 import * as prompt from './prompt';
 
 const extractOrderSpy = vi.spyOn(prompt, 'extractOrder');
@@ -21,6 +22,14 @@ describe('Amazon order EmailProcessor', () => {
     expect(amazonProcessor.matchEmail(email)).toBe(true);
   });
 
+  it('matches amazon shipped emails', async () => {
+    const email = await PostalMime.parse(fixtureEmail);
+  
+    email.subject = 'Shipped: Test order';
+  
+    expect(amazonProcessor.matchEmail(email)).toBe(true);
+  });
+
   it('processes and creates a LunchMoneyAction for amazon orders', async () => {
     const email = await PostalMime.parse(fixtureEmail);
 
@@ -31,6 +40,8 @@ describe('Amazon order EmailProcessor', () => {
     expect(result).toEqual({
       match: {expectedPayee: 'Amazon', expectedTotal: 4495},
       type: 'split',
+      sourceId: '114-0833187-7581859',
+      sourceEvent: 'ordered',
       split: [
         {
           note: 'Brushed Nickel Faucet (114-0833187-7581859)',
@@ -67,6 +78,8 @@ describe('Amazon order EmailProcessor', () => {
     expect(result).toEqual({
       match: {expectedPayee: 'Amazon', expectedTotal: 3700},
       type: 'split',
+      sourceId: '111-2222222-3333333',
+      sourceEvent: 'ordered',
       split: [
         {
           note: 'Item A [x2] (111-2222222-3333333)',
@@ -78,6 +91,139 @@ describe('Amazon order EmailProcessor', () => {
         },
       ],
     });
+  });
+
+  it('processes amazon shipped emails', async () => {
+    const email = await PostalMime.parse(shippedFixtureEmail);
+  
+    extractOrderSpy.mockResolvedValue({
+      orderId: '702-0000000-0000000',
+      totalCostCents: 22049,
+      orderItems: [
+        {
+          name: 'Momcozy M5 Smart Hands-Free Wearable Breast Pump (Cozy Red, 2 Count)',
+          shortName: 'Momcozy M5 Breast Pump',
+          priceEachCents: 20999,
+          quantity: 1,
+        },
+      ],
+    });
+  
+    const result = await amazonProcessor.process(email, env);
+  
+    expect(amazonProcessor.matchEmail(email)).toBe(true);
+  
+    expect(result).toEqual({
+      match: {
+        expectedPayee: 'Amazon',
+        expectedTotal: 22049,
+      },
+      type: 'update',
+      sourceId: '702-0000000-0000000',
+      sourceEvent: 'shipped',
+      note: 'Momcozy M5 Breast Pump (702-0000000-0000000)',
+    });
+  });
+
+  it('removes stale ordered actions when a shipped email arrives', async () => {
+    await env.DB.prepare(
+      'INSERT INTO lunchmoney_actions (source, action) VALUES (?, ?)',
+    )
+      .bind(
+        'amazon',
+        JSON.stringify({
+          type: 'update',
+          sourceId: '702-0000000-0000000',
+          sourceEvent: 'ordered',
+          match: {
+            expectedPayee: 'Amazon',
+            expectedTotal: 22049,
+          },
+          note: 'Old ordered action',
+        }),
+      )
+      .run();
+  
+    await env.DB.prepare(
+      'INSERT INTO lunchmoney_actions (source, action) VALUES (?, ?)',
+    )
+      .bind(
+        'amazon',
+        JSON.stringify({
+          type: 'update',
+          sourceId: '702-0000000-0000000',
+          sourceEvent: 'shipped',
+          match: {
+            expectedPayee: 'Amazon',
+            expectedTotal: 1000,
+          },
+          note: 'Existing shipped action',
+        }),
+      )
+      .run();
+  
+    await env.DB.prepare(
+      'INSERT INTO lunchmoney_actions (source, action) VALUES (?, ?)',
+    )
+      .bind(
+        'amazon',
+        JSON.stringify({
+          type: 'update',
+          sourceId: '111-2222222-3333333',
+          sourceEvent: 'ordered',
+          match: {
+            expectedPayee: 'Amazon',
+            expectedTotal: 5000,
+          },
+          note: 'Different order',
+        }),
+      )
+      .run();
+  
+    const email = await PostalMime.parse(shippedFixtureEmail);
+
+    extractOrderSpy.mockResolvedValue({
+      orderId: '702-0000000-0000000',
+      totalCostCents: 22049,
+      orderItems: [
+        {
+          name: 'Momcozy M5 Smart Hands-Free Wearable Breast Pump',
+          shortName: 'Momcozy M5 Breast Pump',
+          priceEachCents: 20999,
+          quantity: 1,
+        },
+      ],
+    });
+  
+    await amazonProcessor.process(email, env);
+  
+    const {results} = await env.DB.prepare(
+      'SELECT action FROM lunchmoney_actions WHERE source = ?',
+    )
+      .bind('amazon')
+      .all<{action: string}>();
+  
+    const actions = results.map(row => JSON.parse(row.action));
+  
+    expect(
+      actions.some(
+        action =>
+          action.sourceId === '702-0000000-0000000' &&
+          action.sourceEvent === 'ordered',
+      ),
+    ).toBe(false);
+  
+    expect(
+      actions.some(
+        action =>
+          action.sourceId === '702-0000000-0000000' &&
+          action.sourceEvent === 'shipped',
+      ),
+    ).toBe(true);
+  
+    expect(
+      actions.some(action => action.sourceId === '111-2222222-3333333'),
+    ).toBe(true);
   });
 
   it('falls back to an order note when extraction returns no order items', async () => {
@@ -92,6 +238,8 @@ describe('Amazon order EmailProcessor', () => {
     await expect(amazonProcessor.process(email, env)).resolves.toEqual({
       match: {expectedPayee: 'Amazon', expectedTotal: 1000},
       type: 'update',
+      sourceId: '111-2222222-3333333',
+      sourceEvent: 'ordered',
       note: '[No products in email] (111-2222222-3333333)',
     });
   });
@@ -134,53 +282,119 @@ describe('extractOrderBlock', () => {
     expect(result).not.toBeNull();
     expect(result).toContain('Order #');
   });
+
+  it('extracts multiple order blocks from a single Amazon email', () => {
+  const emailText = `
+Order #
+702-9996109-6145035
+
+* Sudocrem
+  Quantity: 1
+  14.49 CAD
+
+* Frida Baby Spatula
+  Quantity: 1
+  12.99 CAD
+
+Total
+28.85 CAD
+
+Arriving tomorrow
+
+Order #
+702-5061481-2939420
+
+* Bambo Nature Baby Diapers
+  Quantity: 1
+  18.79 CAD
+
+* Bearmoss Muslin Crib Sheets
+  Quantity: 1
+  31.66 CAD
+
+Total
+52.97 CAD
+
+©2026 Amazon.ca
+`;
+
+  const results = extractOrderBlocks(emailText);
+
+  expect(results).toHaveLength(2);
+
+  expect(results[0]).toContain('702-9996109-6145035');
+  expect(results[0]).toContain('28.85 CAD');
+  expect(results[0]).not.toContain('702-5061481-2939420');
+
+  expect(results[1]).toContain('702-5061481-2939420');
+  expect(results[1]).toContain('52.97 CAD');
 });
 
-describe('computeItemTaxes', () => {
+});
+
+describe('computeItemAdjustments', () => {
   const i = {
     name: 'Some product',
     shortName: 'Product',
   };
 
-  it('computes taxes for two items correctly', () => {
+  it('computes adjustments for two items correctly', () => {
     const items = [
       {...i, priceEachCents: 2429, quantity: 1},
       {...i, priceEachCents: 1699, quantity: 1},
     ];
-    const total = 4495; // subtotal: 4128, tax: 367
+    const total = 4495; // subtotal: 4128, adjustment: 367
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([216, 151]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([216, 151]);
   });
 
-  it('computes zero taxes correctly', () => {
+  it('computes zero adjustments correctly', () => {
     const items = [
       {...i, priceEachCents: 1000, quantity: 1},
       {...i, priceEachCents: 1500, quantity: 1},
     ];
     const total = 2500;
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([0, 0]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([0, 0]);
   });
 
-  it('throws if total is less than subtotal', () => {
-    const items = [{...i, priceEachCents: 1000, quantity: 1}];
+  it('handles total less than subtotal as a negative adjustment', () => {
+    const items = [
+      {
+        name: 'Item',
+        quantity: 1,
+        priceEachCents: 1000,
+      },
+    ];
     const total = 900;
 
-    expect(() => computeItemTaxes(items, total)).toThrow();
+    expect(computeItemAdjustments(items, total)).toEqual([-100]);
   });
 
-  it('handles small tax split across identical items', () => {
+  it('handles a negative adjustment when total is less than subtotal', () => {
+    const items = [
+      {
+        name: 'Subscribe & Save Item',
+        quantity: 1,
+        priceEachCents: 12599,
+      },
+    ];
+
+  expect(computeItemAdjustments(items, 12567)).toEqual([-32]);
+});
+
+  it('handles small adjustment split across identical items', () => {
     const items = Array.from({length: 5}, () => ({
       ...i,
       priceEachCents: 100,
       quantity: 1,
     }));
-    const total = 505; // subtotal: 500, tax: 5
+    const total = 505; // subtotal: 500, adjustment: 5
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([1, 1, 1, 1, 1]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([1, 1, 1, 1, 1]);
   });
 
   it('handles tricky rounding case with repeating decimals', () => {
@@ -188,43 +402,43 @@ describe('computeItemTaxes', () => {
       {...i, priceEachCents: 100, quantity: 1},
       {...i, priceEachCents: 200, quantity: 1},
     ];
-    const total = 399; // subtotal: 300, tax: 99
+    const total = 399; // subtotal: 300, adjustment: 99
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([33, 66]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([33, 66]);
   });
 
-  it('handles fractional tax with very similar items', () => {
+  it('handles fractional adjustment with very similar items', () => {
     const items = [
       {...i, priceEachCents: 3333, quantity: 1},
       {...i, priceEachCents: 3333, quantity: 1},
       {...i, priceEachCents: 3334, quantity: 1},
     ];
-    const total = 10503; // subtotal: 10000, tax: 503
+    const total = 10503; // subtotal: 10000, adjustment: 503
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([168, 168, 167]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([168, 168, 167]);
   });
 
-  it('allocates tax correctly when items differ greatly in price', () => {
+  it('allocates adjustment correctly when items differ greatly in price', () => {
     const items = [
       {...i, priceEachCents: 99, quantity: 1},
       {...i, priceEachCents: 19999, quantity: 1},
     ];
-    const total = 21712; // subtotal: 20098, tax: 1614
+    const total = 21712; // subtotal: 20098, adjustment: 1614
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([8, 1606]);
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([8, 1606]);
   });
 
-  it('distributes tax correctly across items with quantity > 1', () => {
+  it('distributes adjustment correctly across items with quantity > 1', () => {
     const items = [
       {...i, priceEachCents: 1000, quantity: 2},
       {...i, priceEachCents: 500, quantity: 3},
     ];
-    const total = 3700; // subtotal: 3500, tax: 200
+    const total = 3700; // subtotal: 3500, adjustment: 200
 
-    const taxes = computeItemTaxes(items, total);
-    expect(taxes).toEqual([114, 86]); // 2000 gets 57.14%, 1500 gets 42.86% of 200
+    const adjustments = computeItemAdjustments(items, total);
+    expect(adjustments).toEqual([114, 86]); // 2000 gets 57.14%, 1500 gets 42.86% of 200
   });
 });

@@ -174,3 +174,5 @@ dist
 # Google Apps Script
 
 google-app-script/.clasp.json
+
+.DS_Store

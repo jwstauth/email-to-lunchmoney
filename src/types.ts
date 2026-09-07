@@ -12,7 +12,10 @@ export interface EmailProcessor {
   /**
    * Process am email.
    */
-  process: (email: Email, env: Env) => Promise<LunchMoneyAction | null>;
+  process: (
+    email: Email,
+    env: Env,
+  ) => Promise<LunchMoneyAction | LunchMoneyAction[] | null>;
 }
 
 export interface LunchMoneyMatch {
@@ -31,6 +34,9 @@ export interface LunchMoneySplit {
   /**
    * How to match the transaction in lunchmoney
    */
+  sourceId?: string;
+  sourceEvent?: 'ordered' | 'shipped';
+
   match: LunchMoneyMatch;
   /**
    * How to split the transaction
@@ -58,6 +64,9 @@ export interface LunchMoneyUpdate {
   /**
    * How to match the transaction in lunchmoney
    */
+  sourceId?: string;
+  sourceEvent?: 'ordered' | 'shipped';
+
   match: LunchMoneyMatch;
   /**
    * The updated note for the transaction

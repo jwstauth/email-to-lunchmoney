@@ -1,0 +1,28 @@
+From: no_reply@email.apple.com
+To: test@example.com
+Subject: Your receipt from Apple / Votre reçu d’Apple
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html>
+<body>
+<p>Apple Account:</p>
+<p>test@example.com</p>
+
+<p>Baby Connect: Baby Tracker</p>
+<p>Family (12 months) (Annual)</p>
+<p>$69.99</p>
+
+<p>Billing and Payment</p>
+
+<p>Subtotal</p>
+<p>$69.99</p>
+<p>GST/HST</p>
+<p>$3.50</p>
+
+<p>---</p>
+
+<p>MasterCard •••• 0000 (Apple Pay)</p>
+<p>$73.49</p>
+</body>
+</html>
