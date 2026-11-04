@@ -1,6 +1,7 @@
 import {format, subDays} from 'date-fns';
 
 import type {LunchMoneyAction, LunchMoneyActionRow} from './types';
+import {matchInteracTransfer} from './processors/interac/match';
 
 const LOOKBACK_DAYS = 180;
 
@@ -66,6 +67,44 @@ export async function processActions(env: Env) {
 
   for (const actionRow of actions) {
     const action: LunchMoneyAction = JSON.parse(actionRow.action);
+
+    if (action.type === 'interac') {
+      // PHASE 3: Observation only. This branch NEVER issues a Lunch Money PUT.
+      // Explicit account allowlists are mandatory even for matching previews.
+      const config = env as Env & {
+        INTERAC_ATB_ACCOUNT_IDS?: string;
+        INTERAC_TD_ACCOUNT_IDS?: string;
+      };
+      const parseIds = (value: string | undefined): Set<number> =>
+        new Set((value ?? '').split(',').map(v => v.trim())
+          .filter(v => /^\d+$/.test(v)).map(Number));
+      const atbIds = parseIds(config.INTERAC_ATB_ACCOUNT_IDS);
+      const tdIds = parseIds(config.INTERAC_TD_ACCOUNT_IDS);
+      if (!atbIds.size || !tdIds.size) {
+        console.log(`Interac dry-run action ${actionRow.id}: account allowlists not configured`);
+        continue;
+      }
+      const bank = /\bATB\b/i.test(action.transfer.institution) ? 'ATB' :
+        /^TD\b/i.test(action.transfer.institution) ? 'TD' : null;
+      const ids = bank === 'ATB' ? atbIds : bank === 'TD' ? tdIds : null;
+      if (!ids) {
+        console.log(`Interac dry-run action ${actionRow.id}: bank not configured`);
+        continue;
+      }
+      const scopedTransactions = txnsResp.transactions.filter((txn: any) =>
+        typeof txn.account_id === 'number' && ids.has(txn.account_id) &&
+        !assignedTransactions.includes(txn.id),
+      );
+      const result = matchInteracTransfer(action.transfer, scopedTransactions);
+      if (result.kind === 'matched') {
+        // IDs only, not the names, messages or entire financial records.
+        console.log(`Interac dry-run action ${actionRow.id}: proposed transaction ${result.value.transaction.id}`);
+      } else {
+        console.log(`Interac dry-run action ${actionRow.id}: ${result.kind} (${result.candidates} candidates)`);
+      }
+      // Keep the action queued for later inspection. It is not marked processed.
+      continue;
+    }
 
     // Find matching transaction by payee name. Look for newest transactions
     // first, since we're processing actions in order of newest to oldest

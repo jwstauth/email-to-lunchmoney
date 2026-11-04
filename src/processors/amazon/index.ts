@@ -1,4 +1,4 @@
-import type {Email} from 'postal-mime';
+import type { Email } from 'postal-mime';
 
 import type {
   EmailProcessor,
@@ -8,8 +8,8 @@ import type {
   LunchMoneyUpdate,
 } from 'src/types';
 
-import {extractOrder} from './prompt';
-import type {AmazonOrder, AmazonOrderItem} from './types';
+import { extractOrder } from './prompt';
+import type { AmazonOrder, AmazonOrderItem } from './types';
 
 /**
  * Extracts the main order block from an Amazon plain text email.
@@ -131,15 +131,16 @@ function makeAction(
 }
 
 async function removeStaleOrderedAction(orderId: string, env: Env) {
-  const {results} = await env.DB.prepare(
+  const { results } = await env.DB.prepare(
     "SELECT id, action FROM lunchmoney_actions WHERE source = 'amazon'",
-  ).all<{id: number; action: string}>();
+  ).all<{ id: number; action: string }>();
 
   const staleIds = results
     .filter(row => {
       const action = JSON.parse(row.action) as LunchMoneyAction;
 
       return (
+        action.type !== 'interac' &&
         action.sourceId === orderId &&
         action.sourceEvent === 'ordered'
       );
@@ -171,7 +172,7 @@ async function process(email: Email, env: Env) {
   for (const orderText of orderTexts) {
     const order = await extractOrder(orderText, env);
 
-    console.log('Got order details from amazon email', {order});
+    console.log('Got order details from amazon email', { order });
 
     if (order.totalCostCents === 0) {
       console.info('Ignoring Amazon order with zero cost', {
@@ -195,7 +196,7 @@ async function process(email: Email, env: Env) {
 }
 
 function matchEmail(email: Email) {
-  const {from, subject} = email;
+  const { from, subject } = email;
   const address = from?.address ?? '';
   const isAmazonOrderEmail = subject?.startsWith('Ordered') || subject?.startsWith('Shipped');
 

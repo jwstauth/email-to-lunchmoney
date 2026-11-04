@@ -1,4 +1,5 @@
 import type {Email} from 'postal-mime';
+import type {InteracTransfer} from './processors/interac';
 
 export interface EmailProcessor {
   /**
@@ -82,7 +83,13 @@ export interface LunchMoneyUpdate {
   markReviewed?: boolean;
 }
 
-export type LunchMoneyAction = LunchMoneyUpdate | LunchMoneySplit;
+/** Parsed Interac notification, queued for conservative dry-run matching. */
+export interface LunchMoneyInterac {
+  type: 'interac';
+  transfer: InteracTransfer;
+}
+
+export type LunchMoneyAction = LunchMoneyUpdate | LunchMoneySplit | LunchMoneyInterac;
 
 export interface LunchMoneyActionRow {
   id: number;

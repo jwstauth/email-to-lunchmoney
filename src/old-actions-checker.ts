@@ -1,8 +1,8 @@
-import {subDays} from 'date-fns';
-import {escapeMarkdown as e} from 'telegram-escape';
+import { subDays } from 'date-fns';
+import { escapeMarkdown as e } from 'telegram-escape';
 
-import {sendTelegramMessage} from './telegram';
-import type {LunchMoneyAction, LunchMoneyActionRow} from './types';
+import { sendTelegramMessage } from './telegram';
+import type { LunchMoneyAction, LunchMoneyActionRow } from './types';
 
 const OLD_ACTION_THRESHOLD_DAYS = 15;
 
@@ -20,6 +20,19 @@ export function formatOldActionsMessage(oldActions: LunchMoneyActionRow[]): stri
   for (const actionRow of oldActions) {
     const action = JSON.parse(actionRow.action) as LunchMoneyAction;
     const date = new Date(actionRow.date_created).toLocaleDateString();
+    if (action.type === 'interac') {
+      const transfer = action.transfer;
+      const amount = (transfer.amountCents / 100).toFixed(2);
+
+      lines.push(
+        `*${e(actionRow.source)}* ${e(`(${date})`)}`,
+        `Interac: ${e(transfer.counterparty)} \\- ${e(`$${amount}`)}`,
+        `Reference: ${e(transfer.reference)}`,
+        '',
+      );
+
+      continue;
+    }
     const payee = action.match.expectedPayee;
     const amount = (action.match.expectedTotal / 100).toFixed(2);
 
