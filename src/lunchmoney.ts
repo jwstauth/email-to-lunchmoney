@@ -1,7 +1,7 @@
-import {format, subDays} from 'date-fns';
+import { format, subDays } from 'date-fns';
 
-import type {LunchMoneyAction, LunchMoneyActionRow} from './types';
-import {matchInteracTransfer} from './processors/interac/match';
+import type { LunchMoneyAction, LunchMoneyActionRow } from './types';
+import { matchInteracTransfer } from './processors/interac/match';
 
 const LOOKBACK_DAYS = 180;
 
@@ -68,43 +68,82 @@ export async function processActions(env: Env) {
   for (const actionRow of actions) {
     const action: LunchMoneyAction = JSON.parse(actionRow.action);
 
+
     if (action.type === 'interac') {
-      // PHASE 3: Observation only. This branch NEVER issues a Lunch Money PUT.
-      // Explicit account allowlists are mandatory even for matching previews.
+      // PHASE 4: Observation only. Never issues a Lunch Money PUT.
+      // Account mapping must be configured before matching.
       const config = env as Env & {
-        INTERAC_ATB_ACCOUNT_IDS?: string;
-        INTERAC_TD_ACCOUNT_IDS?: string;
+        INTERAC_ACCOUNT_MAP?: string;
       };
-      const parseIds = (value: string | undefined): Set<number> =>
-        new Set((value ?? '').split(',').map(v => v.trim())
-          .filter(v => /^\d+$/.test(v)).map(Number));
-      const atbIds = parseIds(config.INTERAC_ATB_ACCOUNT_IDS);
-      const tdIds = parseIds(config.INTERAC_TD_ACCOUNT_IDS);
-      if (!atbIds.size || !tdIds.size) {
-        console.log(`Interac dry-run action ${actionRow.id}: account allowlists not configured`);
+
+      let accountMap: Record<string, number[]>;
+
+      try {
+        const parsed: unknown = JSON.parse(config.INTERAC_ACCOUNT_MAP ?? '');
+
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed) ||
+          !Object.values(parsed).every(
+            ids =>
+              Array.isArray(ids) &&
+              ids.length > 0 &&
+              ids.every(id => Number.isSafeInteger(id) && id > 0),
+          )
+        ) {
+          throw new Error('Invalid account mapping');
+        }
+
+        accountMap = parsed as Record<string, number[]>;
+      } catch {
+        console.log(
+          `Interac dry-run action ${actionRow.id}: invalid or missing account mapping`,
+        );
         continue;
       }
-      const bank = /\bATB\b/i.test(action.transfer.institution) ? 'ATB' :
-        /^TD\b/i.test(action.transfer.institution) ? 'TD' : null;
-      const ids = bank === 'ATB' ? atbIds : bank === 'TD' ? tdIds : null;
-      if (!ids) {
-        console.log(`Interac dry-run action ${actionRow.id}: bank not configured`);
-        continue;
-      }
-      const scopedTransactions = txnsResp.transactions.filter((txn: any) =>
-        typeof txn.account_id === 'number' && ids.has(txn.account_id) &&
-        !assignedTransactions.includes(txn.id),
+
+      const institution = action.transfer.institution.trim().toLowerCase();
+
+      const configuredEntry = Object.entries(accountMap).find(
+        ([name]) => name.trim().toLowerCase() === institution,
       );
-      const result = matchInteracTransfer(action.transfer, scopedTransactions);
-      if (result.kind === 'matched') {
-        // IDs only, not the names, messages or entire financial records.
-        console.log(`Interac dry-run action ${actionRow.id}: proposed transaction ${result.value.transaction.id}`);
-      } else {
-        console.log(`Interac dry-run action ${actionRow.id}: ${result.kind} (${result.candidates} candidates)`);
+
+      if (!configuredEntry) {
+        console.log(
+          `Interac dry-run action ${actionRow.id}: institution not configured`,
+        );
+        continue;
       }
-      // Keep the action queued for later inspection. It is not marked processed.
+
+      const ids = new Set(configuredEntry[1]);
+
+      const scopedTransactions = txnsResp.transactions.filter(
+        (txn: any) =>
+          typeof txn.plaid_account_id === 'number' &&
+          ids.has(txn.plaid_account_id) &&
+          !assignedTransactions.includes(txn.id),
+      );
+
+      const result = matchInteracTransfer(
+        action.transfer,
+        scopedTransactions,
+      );
+
+      if (result.kind === 'matched') {
+        console.log(
+          `Interac dry-run action ${actionRow.id}: proposed transaction ${result.value.transaction.id}`,
+        );
+      } else {
+        console.log(
+          `Interac dry-run action ${actionRow.id}: ${result.kind} (${result.candidates} candidates)`,
+        );
+      }
+
+      // Retain the action in D1. No Lunch Money write or deletion.
       continue;
     }
+
 
     // Find matching transaction by payee name. Look for newest transactions
     // first, since we're processing actions in order of newest to oldest
@@ -137,13 +176,13 @@ export async function processActions(env: Env) {
         const transaction = {
           id: matchingTransaction.id,
           notes: action.note,
-          ...(action.payee === undefined ? {} : {payee: action.payee}),
+          ...(action.payee === undefined ? {} : { payee: action.payee }),
           status: action.markReviewed ? 'cleared' : 'uncleared',
         };
 
         await lunchMoneyApi(env, `/transactions/${matchingTransaction.id}`, {
           method: 'PUT',
-          body: JSON.stringify({transaction}),
+          body: JSON.stringify({ transaction }),
         });
       }
 
@@ -158,7 +197,7 @@ export async function processActions(env: Env) {
 
         await lunchMoneyApi(env, `/transactions/${matchingTransaction.id}`, {
           method: 'PUT',
-          body: JSON.stringify({split}),
+          body: JSON.stringify({ split }),
         });
       }
 

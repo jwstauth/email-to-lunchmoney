@@ -1,7 +1,7 @@
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {processActions} from './lunchmoney';
-import type {LunchMoneyInterac, LunchMoneyActionRow} from './types';
+import { processActions } from './lunchmoney';
+import type { LunchMoneyInterac, LunchMoneyActionRow } from './types';
 
 const transfer: LunchMoneyInterac['transfer'] = {
   direction: 'outgoing',
@@ -23,14 +23,14 @@ function row(id = 1): LunchMoneyActionRow {
     id,
     source: 'interac',
     date_created: '2026-10-30T23:24:00Z',
-    action: JSON.stringify({type: 'interac', transfer}),
+    action: JSON.stringify({ type: 'interac', transfer }),
   };
 }
 
 function tdTransaction(overrides: Record<string, unknown> = {}) {
   return {
     id: 101,
-    account_id: 20,
+    plaid_account_id: 20,
     date: '2026-10-30',
     amount: '-280.0000',
     payee: 'SEND E-TFR ***n4g',
@@ -51,30 +51,32 @@ function harness(transactions: Record<string, unknown>[], options: {
     prepare: vi.fn((sql: string) => {
       if (/\bDELETE\b|\bINSERT\b|\bUPDATE\b/i.test(sql)) dbWrites.push(sql);
       return {
-        all: vi.fn(async () => ({results: [row()]})),
-        bind: vi.fn(() => ({run: vi.fn(async () => ({success: true}))})),
-        run: vi.fn(async () => ({success: true})),
+        all: vi.fn(async () => ({ results: [row()] })),
+        bind: vi.fn(() => ({ run: vi.fn(async () => ({ success: true })) })),
+        run: vi.fn(async () => ({ success: true })),
       };
     }),
   };
-  const requests: {url: string; method: string}[] = [];
+  const requests: { url: string; method: string }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? 'GET').toUpperCase();
-    requests.push({url, method});
+    requests.push({ url, method });
     if (method !== 'GET') throw new Error(`Unexpected mutation request: ${method} ${url}`);
-    return new Response(JSON.stringify({transactions}), {
+    return new Response(JSON.stringify({ transactions }), {
       status: 200,
-      headers: {'content-type': 'application/json'},
+      headers: { 'content-type': 'application/json' },
     });
   }));
   const env = {
     DB: db,
     LUNCHMONEY_API_KEY: 'TEST_ONLY',
-    INTERAC_ATB_ACCOUNT_IDS: options.atbIds ?? '10',
-    INTERAC_TD_ACCOUNT_IDS: options.tdIds ?? '20',
+    INTERAC_ACCOUNT_MAP: JSON.stringify({
+      'ATB Financial': [10],
+      'TD Canada Trust': [20],
+    }),
   } as unknown as Env;
-  return {env, requests, dbWrites};
+  return { env, requests, dbWrites };
 }
 
 afterEach(() => {
@@ -84,8 +86,8 @@ afterEach(() => {
 
 describe('Interac Worker integration - dry-run safety', () => {
   it('proposes a unique eligible TD match and never writes to Lunch Money or D1', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const {env, requests, dbWrites} = harness([tdTransaction()]);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const { env, requests, dbWrites } = harness([tdTransaction()]);
     await processActions(env);
     expect(log.mock.calls.some(args => String(args[0]).includes('proposed transaction 101'))).toBe(true);
     expect(requests).toHaveLength(1);
@@ -94,28 +96,43 @@ describe('Interac Worker integration - dry-run safety', () => {
   });
 
   it('does not match the same transfer against a TD account outside the allowlist', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const {env, requests, dbWrites} = harness([tdTransaction({account_id: 99})]);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const { env, requests, dbWrites } = harness([tdTransaction({ plaid_account_id: 99 })]);
     await processActions(env);
     expect(log.mock.calls.some(args => String(args[0]).includes('none (0 candidates)'))).toBe(true);
     expect(requests.every(r => r.method === 'GET')).toBe(true);
     expect(dbWrites).toHaveLength(0);
   });
 
-  it('fails closed when an account allowlist is absent', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const {env, requests, dbWrites} = harness([tdTransaction()], {tdIds: ''});
+
+
+  it('fails closed when account mapping is missing', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const { env, requests, dbWrites } = harness([tdTransaction()]);
+
+    // Simulate missing Cloudflare configuration.
+    delete (env as Env & { INTERAC_ACCOUNT_MAP?: string })
+      .INTERAC_ACCOUNT_MAP;
+
     await processActions(env);
-    expect(log.mock.calls.some(args => String(args[0]).includes('account allowlists not configured'))).toBe(true);
+
+    expect(
+      log.mock.calls.some(args =>
+        String(args[0]).includes('invalid or missing account mapping'),
+      ),
+    ).toBe(true);
+
     expect(requests.every(r => r.method === 'GET')).toBe(true);
     expect(dbWrites).toHaveLength(0);
   });
 
+
+
   it('holds ambiguous transfers without selecting one', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const {env, requests, dbWrites} = harness([
+    const log = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const { env, requests, dbWrites } = harness([
       tdTransaction(),
-      tdTransaction({id: 102}),
+      tdTransaction({ id: 102 }),
     ]);
     await processActions(env);
     expect(log.mock.calls.some(args => String(args[0]).includes('ambiguous (2 candidates)'))).toBe(true);
@@ -124,11 +141,11 @@ describe('Interac Worker integration - dry-run safety', () => {
   });
 
   it('does not enrich reviewed transactions, existing notes or recurring matches', async () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const {env, dbWrites} = harness([
-      tdTransaction({id: 101, status: 'cleared'}),
-      tdTransaction({id: 102, notes: 'Already annotated'}),
-      tdTransaction({id: 103, recurring_id: 123}),
+    const log = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const { env, dbWrites } = harness([
+      tdTransaction({ id: 101, status: 'cleared' }),
+      tdTransaction({ id: 102, notes: 'Already annotated' }),
+      tdTransaction({ id: 103, recurring_id: 123 }),
     ]);
     await processActions(env);
     expect(log.mock.calls.some(args => String(args[0]).includes('none (0 candidates)'))).toBe(true);
