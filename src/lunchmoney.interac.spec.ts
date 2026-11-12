@@ -32,7 +32,7 @@ function tdTransaction(overrides: Record<string, unknown> = {}) {
     id: 101,
     plaid_account_id: 20,
     date: '2026-10-30',
-    amount: '-280.0000',
+    amount: '280.0000',
     payee: 'SEND E-TFR ***n4g',
     original_name: 'SEND E-TFR ***n4g',
     notes: null,

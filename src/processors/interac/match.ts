@@ -1,4 +1,4 @@
-import type {InteracTransfer} from './index';
+import type { InteracTransfer } from './index';
 
 /** Minimal subset of Lunch Money transactions used by Interac matching. */
 export interface InteracCandidate {
@@ -21,8 +21,8 @@ export interface InteracMatch {
 }
 
 export type InteracMatchResult =
-  | {kind: 'matched'; value: InteracMatch}
-  | {kind: 'none' | 'ambiguous'; candidates: number};
+  | { kind: 'matched'; value: InteracMatch }
+  | { kind: 'none' | 'ambiguous'; candidates: number };
 
 function dateNumber(iso: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
@@ -43,14 +43,14 @@ function amountCents(amount: string | number): number | null {
     Math.abs(value * 100 - cents) < 0.0001 ? cents : null;
 }
 
-function bankInfo(original: string): {bank: 'ATB' | 'TD'; direction: 'incoming' | 'outgoing'; suffix?: string; shortName?: string} | null {
+function bankInfo(original: string): { bank: 'ATB' | 'TD'; direction: 'incoming' | 'outgoing'; suffix?: string; shortName?: string } | null {
   const desc = original.trim();
   const tdOut = desc.match(/^SEND\s+E-TFR\s+\*{3}([a-z0-9]{3})\s*$/i);
-  if (tdOut) return {bank: 'TD', direction: 'outgoing', suffix: tdOut[1]};
+  if (tdOut) return { bank: 'TD', direction: 'outgoing', suffix: tdOut[1] };
   const atbIn = desc.match(/^INTERAC\s+e-Transfer\s+Autodep\s+Rcvd\s*-\s*(.+)$/i);
-  if (atbIn) return {bank: 'ATB', direction: 'incoming', shortName: atbIn[1].trim()};
+  if (atbIn) return { bank: 'ATB', direction: 'incoming', shortName: atbIn[1].trim() };
   const atbOut = desc.match(/^Interac\s+e-Transfer\s+Sent(?:-Autodep)?\s*-\s*(.+)$/i);
-  if (atbOut) return {bank: 'ATB', direction: 'outgoing', shortName: atbOut[1].trim()};
+  if (atbOut) return { bank: 'ATB', direction: 'outgoing', shortName: atbOut[1].trim() };
   return null;
 }
 
@@ -71,7 +71,7 @@ export function matchInteracTransfer(
   transfer: InteracTransfer,
   transactions: readonly InteracCandidate[],
 ): InteracMatchResult {
-  const expectedCents = transfer.amountCents * (transfer.direction === 'incoming' ? 1 : -1);
+  const expectedCents = transfer.amountCents * (transfer.direction === 'incoming' ? -1 : 1);
   const eligible = transactions.flatMap(txn => {
     if (txn.status !== 'uncleared' || txn.recurring_id != null || Boolean(txn.notes?.trim())) return [];
     const original = txn.original_name ?? txn.payee;
@@ -83,13 +83,13 @@ export function matchInteracTransfer(
     if (info.bank === 'ATB' && !/\bATB\b/i.test(transfer.institution)) return [];
     if (info.bank === 'TD' && !/^TD\b/i.test(transfer.institution)) return [];
     if (info.bank === 'TD' && info.suffix?.toLowerCase() !== transfer.reference.slice(-3).toLowerCase()) return [];
-    return [{txn, info}];
+    return [{ txn, info }];
   });
 
-  if (eligible.length === 0) return {kind: 'none', candidates: 0};
-  if (eligible.length !== 1) return {kind: 'ambiguous', candidates: eligible.length};
+  if (eligible.length === 0) return { kind: 'none', candidates: 0 };
+  if (eligible.length !== 1) return { kind: 'ambiguous', candidates: eligible.length };
 
-  const {txn, info} = eligible[0];
+  const { txn, info } = eligible[0];
   const details = [
     transfer.message,
     `Interac ${transfer.direction === 'incoming' ? 'sender' : 'recipient'}: ${transfer.counterparty}`,
@@ -101,10 +101,12 @@ export function matchInteracTransfer(
   const proposedPayee = currentUnchanged
     ? info.bank === 'ATB' ? info.shortName : transfer.counterparty
     : undefined;
-  return {kind: 'matched', value: {
-    transaction: txn,
-    bank: info.bank,
-    ...(proposedPayee ? {payee: proposedPayee} : {}),
-    note,
-  }};
+  return {
+    kind: 'matched', value: {
+      transaction: txn,
+      bank: info.bank,
+      ...(proposedPayee ? { payee: proposedPayee } : {}),
+      note,
+    }
+  };
 }
