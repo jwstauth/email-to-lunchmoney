@@ -42,42 +42,83 @@ function tdTransaction(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function harness(transactions: Record<string, unknown>[], options: {
-  atbIds?: string;
-  tdIds?: string;
-} = {}) {
+
+function harness(
+  transactions: Record<string, unknown>[],
+  options: {
+    mode?: 'dry-run' | 'live';
+    failPut?: boolean;
+  } = {},
+) {
   const dbWrites: string[] = [];
+
   const db = {
     prepare: vi.fn((sql: string) => {
-      if (/\bDELETE\b|\bINSERT\b|\bUPDATE\b/i.test(sql)) dbWrites.push(sql);
+      if (/\bDELETE\b|\bINSERT\b|\bUPDATE\b/i.test(sql)) {
+        dbWrites.push(sql);
+      }
       return {
         all: vi.fn(async () => ({ results: [row()] })),
-        bind: vi.fn(() => ({ run: vi.fn(async () => ({ success: true })) })),
+        bind: vi.fn(() => ({
+          run: vi.fn(async () => ({ success: true })),
+        })),
         run: vi.fn(async () => ({ success: true })),
       };
     }),
   };
-  const requests: { url: string; method: string }[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+
+  const requests: {
+    url: string;
+    method: string;
+    body?: string;
+  }[] = [];
+
+  vi.stubGlobal('fetch', vi.fn(async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const url = String(input);
     const method = (init?.method ?? 'GET').toUpperCase();
-    requests.push({ url, method });
-    if (method !== 'GET') throw new Error(`Unexpected mutation request: ${method} ${url}`);
-    return new Response(JSON.stringify({ transactions }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
+
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? init.body : undefined,
     });
+
+    if (method === 'GET') {
+      return new Response(JSON.stringify({ transactions }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    if (method === 'PUT') {
+      return new Response(
+        JSON.stringify({ success: !options.failPut }),
+        {
+          status: options.failPut ? 500 : 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      );
+    }
+
+    throw new Error(`Unexpected request: ${method} ${url}`);
   }));
+
   const env = {
     DB: db,
     LUNCHMONEY_API_KEY: 'TEST_ONLY',
+    INTERAC_MODE: options.mode ?? 'dry-run',
     INTERAC_ACCOUNT_MAP: JSON.stringify({
       'ATB Financial': [10],
       'TD Canada Trust': [20],
     }),
   } as unknown as Env;
+
   return { env, requests, dbWrites };
 }
+
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -149,6 +190,87 @@ describe('Interac Worker integration - dry-run safety', () => {
     ]);
     await processActions(env);
     expect(log.mock.calls.some(args => String(args[0]).includes('none (0 candidates)'))).toBe(true);
+    expect(dbWrites).toHaveLength(0);
+  });
+});
+
+
+describe('Interac Worker integration - live updates', () => {
+  it('updates an eligible transaction and removes its D1 action', async () => {
+    const { env, requests, dbWrites } = harness(
+      [tdTransaction()],
+      { mode: 'live' },
+    );
+
+    await processActions(env);
+
+    const put = requests.find(r => r.method === 'PUT');
+
+    expect(put).toBeDefined();
+    expect(put?.url).toContain('/transactions/101');
+
+    const body = JSON.parse(put!.body!);
+
+    expect(body.transaction).toEqual({
+      id: 101,
+      notes: 'week of Oct 26 | Interac recipient: MARYAM JARRAHI | Reference: C1Aame6Gdn4g',
+      payee: 'MARYAM JARRAHI',
+      status: 'uncleared',
+    });
+
+    expect(dbWrites).toHaveLength(1);
+    expect(dbWrites[0]).toMatch(/\bDELETE\b/i);
+  });
+
+  it('preserves a manually renamed payee', async () => {
+    const { env, requests, dbWrites } = harness(
+      [tdTransaction({ payee: 'My custom payee' })],
+      { mode: 'live' },
+    );
+
+    await processActions(env);
+
+    const put = requests.find(r => r.method === 'PUT');
+
+    expect(put).toBeDefined();
+
+    const body = JSON.parse(put!.body!);
+
+    expect(body.transaction.id).toBe(101);
+    expect(body.transaction).not.toHaveProperty('payee');
+    expect(body.transaction.status).toBe('uncleared');
+    expect(body.transaction.notes).toContain('Interac recipient: MARYAM JARRAHI');
+
+    expect(dbWrites).toHaveLength(1);
+  });
+
+  it('retains the D1 action if the Lunch Money update fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => { });
+
+    const { env, requests, dbWrites } = harness(
+      [tdTransaction()],
+      { mode: 'live', failPut: true },
+    );
+
+    await processActions(env);
+
+    expect(requests.some(r => r.method === 'PUT')).toBe(true);
+    expect(dbWrites).toHaveLength(0);
+  });
+
+  it('does not update an ineligible transaction in live mode', async () => {
+    const { env, requests, dbWrites } = harness(
+      [
+        tdTransaction({ id: 101, status: 'cleared' }),
+        tdTransaction({ id: 102, notes: 'Existing note' }),
+        tdTransaction({ id: 103, recurring_id: 123 }),
+      ],
+      { mode: 'live' },
+    );
+
+    await processActions(env);
+
+    expect(requests.every(r => r.method === 'GET')).toBe(true);
     expect(dbWrites).toHaveLength(0);
   });
 });

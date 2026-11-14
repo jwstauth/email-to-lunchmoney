@@ -6,7 +6,9 @@
   "observability": {
     "enabled": true,
   },
-  "compatibility_flags": ["nodejs_als"],
+  "compatibility_flags": [
+    "nodejs_als"
+  ],
   "version_metadata": {
     "binding": "CF_VERSION_METADATA",
   },
@@ -17,7 +19,13 @@
       "database_id": "afbe28da-7b30-404a-a5c2-a47dace502e9",
     },
   ],
+  "vars": {
+    "INTERAC_ACCOUNT_MAP": "{\"ATB Financial\":[157428],\"TD Canada Trust\":[157432]}",
+    "INTERAC_MODE": "dry-run"
+  },
   "triggers": {
-    "crons": ["*/30 * * * *"],
+    "crons": [
+      "*/30 * * * *"
+    ],
   },
 }

@@ -130,18 +130,56 @@ export async function processActions(env: Env) {
         scopedTransactions,
       );
 
-      if (result.kind === 'matched') {
+
+      if (result.kind !== 'matched') {
         console.log(
-          `Interac dry-run action ${actionRow.id}: proposed transaction ${result.value.transaction.id}`,
+          `Interac action ${actionRow.id}: ${result.kind} (${result.candidates} candidates)`,
         );
-      } else {
+        continue;
+      }
+
+      const transactionId = result.value.transaction.id;
+      const mode = (env as Env & { INTERAC_MODE?: string }).INTERAC_MODE;
+
+      // Keep the existing observation-only behaviour.
+      if (mode !== 'live') {
         console.log(
-          `Interac dry-run action ${actionRow.id}: ${result.kind} (${result.candidates} candidates)`,
+          `Interac dry-run action ${actionRow.id}: proposed transaction ${transactionId}`,
+        );
+        continue;
+      }
+
+      // Live mode: use the same update/cleanup pattern as Amazon and Apple.
+      try {
+        const transaction = {
+          id: transactionId,
+          notes: result.value.note,
+          ...(result.value.payee === undefined
+            ? {}
+            : { payee: result.value.payee }),
+          status: 'uncleared',
+        };
+
+        await lunchMoneyApi(env, `/transactions/${transactionId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ transaction }),
+        });
+
+        assignedTransactions.push(transactionId);
+        processedActionIds.push(actionRow.id);
+
+        console.log(
+          `Successfully processed Interac action ${actionRow.id} for transaction ${transactionId}`,
+        );
+      } catch (error) {
+        console.error(
+          `Failed to process Interac action ${actionRow.id}:`,
+          error,
         );
       }
 
-      // Retain the action in D1. No Lunch Money write or deletion.
       continue;
+
     }
 
 
