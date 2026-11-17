@@ -56,8 +56,8 @@ function bankInfo(original: string): { bank: 'ATB' | 'TD'; direction: 'incoming'
 
 function dateAllowed(transfer: InteracTransfer, offset: number): boolean {
   if (transfer.direction === 'incoming') return offset >= -2 && offset <= 2;
-  if (transfer.completion === 'accepted') return offset >= -14 && offset <= 1;
-  return offset >= -3 && offset <= 1;
+  if (transfer.completion === 'accepted') return offset >= -14 && offset <= 3;
+  return offset >= -3 && offset <= 3;
 }
 
 /**

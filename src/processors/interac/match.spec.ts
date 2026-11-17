@@ -69,4 +69,26 @@ describe('Interac candidate matching (no API writes)', () => {
     expect(matchInteracTransfer(base, [{ ...atb, date: '2026-09-10' }]).kind).toBe('none');
     expect(matchInteracTransfer({ ...base, institution: 'TD Canada Trust' }, [atb]).kind).toBe('none');
   });
+
+  it('matches outgoing TD transfers posted 2 days later', () => {
+    const result = matchInteracTransfer(tdTransfer, [
+      { ...td, date: '2026-11-01' },
+    ]);
+    expect(result.kind).toBe('matched');
+  });
+
+  it('matches outgoing TD transfers posted 3 days later', () => {
+    const result = matchInteracTransfer(tdTransfer, [
+      { ...td, date: '2026-11-02' },
+    ]);
+    expect(result.kind).toBe('matched');
+  });
+
+  it('rejects outgoing TD transfers posted 4 days later', () => {
+    const result = matchInteracTransfer(tdTransfer, [
+      { ...td, date: '2026-11-03' },
+    ]);
+    expect(result.kind).toBe('none');
+  });
+
 });

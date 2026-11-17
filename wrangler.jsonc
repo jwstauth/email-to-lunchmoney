@@ -21,7 +21,7 @@
   ],
   "vars": {
     "INTERAC_ACCOUNT_MAP": "{\"ATB Financial\":[157428],\"TD Canada Trust\":[157432]}",
-    "INTERAC_MODE": "dry-run"
+    "INTERAC_MODE": "live"
   },
   "triggers": {
     "crons": [
