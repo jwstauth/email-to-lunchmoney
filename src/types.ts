@@ -24,6 +24,10 @@ export interface LunchMoneyMatch {
    * The name of the payee to match
    */
   expectedPayee: string;
+  /** Optional permitted payment merchant names (used by Uber Eats). */
+  expectedPayees?: string[];
+  /** Optional service date, YYYY-MM-DD; constrains ambiguous merchant matches. */
+  expectedDate?: string;
   /**
    * The expected total to match in lunchmoney in cents
    */

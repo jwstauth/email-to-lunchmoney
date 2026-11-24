@@ -1,0 +1,7 @@
+From: Uber Receipts <noreply@uber.com>
+To: fixture@example.invalid
+Subject: Your Wednesday afternoon order with Uber Eats
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><div data-testid="header_date">Nov 18, 2026</div><div data-testid="header_sub_message">Here's your receipt for Synthetic Restaurant.</div><td data-testid="total_fare_amount">$115.81</td><td data-testid="address_point_0_time">4:10 p.m. - Pickup</td><td data-testid="address_point_0_address">Synthetic Restaurant, Calgary</td><td data-testid="address_point_1_time">4:19 p.m. - Delivery</td><td data-testid="address_point_1_address">[REDACTED], Calgary</td></body></html>

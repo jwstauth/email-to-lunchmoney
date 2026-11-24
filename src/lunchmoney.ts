@@ -183,17 +183,32 @@ export async function processActions(env: Env) {
     }
 
 
-    // Find matching transaction by payee name. Look for newest transactions
-    // first, since we're processing actions in order of newest to oldest
-    const matchingTransaction = txnsResp.transactions
+    // Uber receipts require a unique amount/payee/date match. Banking
+    // posting dates can lag the actual trip/order by a few days.
+    const isUberReceipt = actionRow.source === 'uber-ride' || actionRow.source === 'uber-eats';
+    const permittedPayees = action.match.expectedPayees ?? [action.match.expectedPayee];
+    const candidates = [...txnsResp.transactions]
       .reverse()
-      .find(
-        (txn: any) =>
-          !assignedTransactions.includes(txn.id) &&
-          !hasNote(txn.notes) &&
-          txn.payee === action.match.expectedPayee &&
-          txn.amount === (action.match.expectedTotal / 100).toFixed(4),
-      );
+      .filter((txn: any) => {
+        if (assignedTransactions.includes(txn.id) || hasNote(txn.notes)) {return false;}
+        if (!permittedPayees.some(payee => payee.toLowerCase() === String(txn.payee).toLowerCase())) {return false;}
+        if (txn.amount !== (action.match.expectedTotal / 100).toFixed(4)) {return false;}
+        if (action.match.expectedDate) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(txn.date)) {return false;}
+          const serviceDate = Date.parse(`${action.match.expectedDate}T00:00:00Z`);
+          const postingDate = Date.parse(`${txn.date}T00:00:00Z`);
+          if (!Number.isFinite(serviceDate) || !Number.isFinite(postingDate)) {return false;}
+          const dayDifference = Math.round((postingDate - serviceDate) / 86400000);
+          if (dayDifference < -1 || dayDifference > 3) {return false;}
+        }
+        return true;
+      });
+
+    if (isUberReceipt && candidates.length !== 1) {
+      console.log(`Uber action ${actionRow.id}: ${candidates.length} eligible candidates; leaving unmatched`);
+      continue;
+    }
+    const matchingTransaction = candidates[0];
 
     // if we can't find the transaction skip it
     if (matchingTransaction === undefined) {

@@ -1,0 +1,7 @@
+From: Uber Receipts <noreply@uber.com>
+To: fixture@example.invalid
+Subject: Your Thursday morning trip with Uber
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><div data-testid="header_date">Nov 19, 2026</div><div data-testid="header_sub_message">We hope you enjoyed your ride this morning.</div><td data-testid="total_fare_amount">$16.98</td><td data-testid="address_point_0_time">7:24 a.m.</td><td data-testid="address_point_0_address">[REDACTED], Calgary, AB [REDACTED] [REDACTED], Canada</td><td data-testid="address_point_1_time">7:33 a.m.</td><td data-testid="address_point_1_address">200 8 Ave SW, Calgary, AB T2P 1B5, Canada</td></body></html>

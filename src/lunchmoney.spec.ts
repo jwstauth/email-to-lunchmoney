@@ -515,3 +515,44 @@ describe('processActions', () => {
     expect(remainingActions.results).toHaveLength(0);
   });
 });
+
+describe('Uber receipt matching safeguards', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM lunchmoney_actions').run();
+  });
+
+  async function queueUberAction() {
+    await env.DB.prepare('INSERT INTO lunchmoney_actions (source, action) VALUES (?, ?)')
+      .bind('uber-ride', JSON.stringify({
+        type: 'update',
+        match: {expectedPayee: 'Uber', expectedTotal: 1596, expectedDate: '2026-11-19'},
+        note: 'Example ride',
+      }))
+      .run();
+  }
+
+  it('does not update an ambiguous same-amount pair', async () => {
+    await queueUberAction();
+    const transactions = [
+      createTestTransaction({id: 901, payee: 'Uber', amount: '15.9600', date: '2026-11-19', notes: null}),
+      createTestTransaction({id: 902, payee: 'Uber', amount: '15.9600', date: '2026-11-20', notes: null}),
+    ];
+    fetchMock.get('https://dev.lunchmoney.app')
+      .intercept({path: /\/v1\/transactions\?.*/})
+      .reply(200, createMockTransactionsResponse(transactions));
+    await processActions(env);
+    expect((await getAllTransactions()).results).toHaveLength(1);
+  });
+
+  it('does not update an Uber charge outside the posting date window', async () => {
+    await queueUberAction();
+    const transactions = [
+      createTestTransaction({id: 903, payee: 'Uber', amount: '15.9600', date: '2026-11-10', notes: null}),
+    ];
+    fetchMock.get('https://dev.lunchmoney.app')
+      .intercept({path: /\/v1\/transactions\?.*/})
+      .reply(200, createMockTransactionsResponse(transactions));
+    await processActions(env);
+    expect((await getAllTransactions()).results).toHaveLength(1);
+  });
+});

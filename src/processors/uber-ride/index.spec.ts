@@ -46,3 +46,18 @@ test.for(nonReceiptCases)('does not match non-receipt emails: %s', async file =>
   // Should not match preliminary trip summaries
   expect(uberRideProcessor.matchEmail(email)).toBe(false);
 });
+
+const novemberSamples = [
+  {file: 'nov-2026-morning', total: 1698, note: '[REDACTED], Calgary, AB [REDACTED] [REDACTED], Canada → 200 8 Ave SW, Calgary, AB T2P 1B5, Canada [07:24, 9m]'},
+  {file: 'nov-2026-evening', total: 1596, note: '140 9 Ave SW, Calgary, AB T2P 3H9, Canada → [REDACTED], Calgary, AB [REDACTED] [REDACTED], Canada [17:43, 10m]'},
+];
+test.for(novemberSamples)('parses newer Canadian receipt: $file', async ({file, total, note}) => {
+  const fixture = await import(`./fixtures/${file}.eml?raw`);
+  const email = await PostalMime.parse(fixture.default);
+  expect(uberRideProcessor.matchEmail(email)).toBe(true);
+  expect(await uberRideProcessor.process(email, env)).toEqual({
+    type: 'update',
+    match: {expectedPayee: 'Uber', expectedTotal: total, expectedDate: '2026-11-19'},
+    note,
+  });
+});

@@ -14,6 +14,7 @@ import {lyftBikeProcessor} from 'src/processors/lyft-bike';
 import {lyftRideProcessor} from 'src/processors/lyft-ride';
 import {steamEmailProcessor} from 'src/processors/steam';
 import {uberRideProcessor} from 'src/processors/uber-ride';
+import {uberEatsProcessor} from 'src/processors/uber-eats';
 
 import type {EmailProcessor} from './types';
 
@@ -36,4 +37,5 @@ export const DEFAULT_EMAIL_PROCESSORS: EmailProcessor[] = [
   cloudflareProcessor,
   steamEmailProcessor,
   uberRideProcessor,
+  uberEatsProcessor,
 ];
