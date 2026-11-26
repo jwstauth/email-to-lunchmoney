@@ -190,16 +190,16 @@ export async function processActions(env: Env) {
     const candidates = [...txnsResp.transactions]
       .reverse()
       .filter((txn: any) => {
-        if (assignedTransactions.includes(txn.id) || hasNote(txn.notes)) {return false;}
-        if (!permittedPayees.some(payee => payee.toLowerCase() === String(txn.payee).toLowerCase())) {return false;}
-        if (txn.amount !== (action.match.expectedTotal / 100).toFixed(4)) {return false;}
+        if (assignedTransactions.includes(txn.id) || hasNote(txn.notes)) { return false; }
+        if (!permittedPayees.some(payee => payee.toLowerCase() === String(txn.payee).toLowerCase())) { return false; }
+        if (txn.amount !== (action.match.expectedTotal / 100).toFixed(4)) { return false; }
         if (action.match.expectedDate) {
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(txn.date)) {return false;}
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(txn.date)) { return false; }
           const serviceDate = Date.parse(`${action.match.expectedDate}T00:00:00Z`);
           const postingDate = Date.parse(`${txn.date}T00:00:00Z`);
-          if (!Number.isFinite(serviceDate) || !Number.isFinite(postingDate)) {return false;}
+          if (!Number.isFinite(serviceDate) || !Number.isFinite(postingDate)) { return false; }
           const dayDifference = Math.round((postingDate - serviceDate) / 86400000);
-          if (dayDifference < -1 || dayDifference > 3) {return false;}
+          if (dayDifference < -1 || dayDifference > 3) { return false; }
         }
         return true;
       });
